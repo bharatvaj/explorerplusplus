@@ -254,7 +254,16 @@ void ShellBrowserImpl::ChangeToInitialFolder()
 	// switch to a folder, in this case, the folder represented by the current entry. Normally, this
 	// is only done once a navigation commits.
 	auto *currentEntry = m_navigationController->GetCurrentEntry();
-	ChangeFolders(currentEntry->GetPidl());
+	if (m_appServices->GetFeatureList()->IsEnabled(Feature::BackgroundThreadEnumeration))
+	{
+		// The initial navigation will populate the folder state when it commits. Avoid resolving
+		// a restored network folder on the UI thread before the window is shown.
+		m_directoryState.pidlDirectory = currentEntry->GetPidl();
+	}
+	else
+	{
+		ChangeFolders(currentEntry->GetPidl());
+	}
 }
 
 bool ShellBrowserImpl::IsAutoArrangeEnabled() const

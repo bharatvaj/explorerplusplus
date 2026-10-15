@@ -8,8 +8,10 @@
 #include "NavigationRequestTestHelper.h"
 #include "PidlTestHelper.h"
 #include "ShellBrowser/NavigationEvents.h"
+#include "ShellBrowser/NavigationManager.h"
 #include "ShellBrowser/PreservedShellBrowser.h"
 #include "ShellBrowserFake.h"
+#include "ShellEnumeratorFake.h"
 #include "../Explorer++/ShellBrowser/HistoryEntry.h"
 #include "../Explorer++/ShellBrowser/PreservedHistoryEntry.h"
 #include "../Helper/ShellHelper.h"
@@ -34,6 +36,39 @@ protected:
 	BrowserWindowMock m_browser;
 	ShellBrowserFake m_shellBrowser;
 };
+
+TEST_F(ShellNavigationControllerTest, GoUpStopsPendingNavigation)
+{
+	auto enumerator = std::make_shared<ShellEnumeratorFake>();
+	auto background = std::make_shared<concurrencpp::manual_executor>();
+	auto ui = std::make_shared<concurrencpp::manual_executor>();
+	NavigationManager manager(&m_shellBrowser, &m_navigationEvents, enumerator, background, ui);
+	ShellNavigationController controller(&m_shellBrowser, &m_browser, &manager,
+		&m_navigationEvents, CreateSimplePidlForTest(L"c:\\initial"));
+
+	auto first = CreateSimplePidlForTest(L"c:\\first");
+	auto params = NavigateParams::Normal(first.Raw());
+	controller.Navigate(params);
+	background->loop(std::numeric_limits<size_t>::max());
+	ui->loop(std::numeric_limits<size_t>::max());
+
+	auto next = CreateSimplePidlForTest(L"c:\\slow");
+	params = NavigateParams::Normal(next.Raw());
+	controller.Navigate(params);
+	ASSERT_NE(manager.MaybeGetLatestActiveNavigation(), nullptr);
+
+	controller.GoUp();
+	ASSERT_NE(manager.MaybeGetLatestPendingNavigation(), nullptr);
+	EXPECT_TRUE(manager.MaybeGetLatestPendingNavigation()->Stopped());
+	EXPECT_EQ(controller.GetCurrentEntry()->GetPidl(), first);
+
+	background->loop(std::numeric_limits<size_t>::max());
+	ui->loop(std::numeric_limits<size_t>::max());
+	EXPECT_FALSE(manager.HasAnyPendingNavigations());
+
+	background->shutdown();
+	ui->shutdown();
+}
 
 TEST_F(ShellNavigationControllerTest, RefreshInitialEntry)
 {

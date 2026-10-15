@@ -192,7 +192,7 @@ TEST_F(NavigationManagerSignalTest, CancelledSubsequentNavigation)
 	RunExecutors();
 }
 
-TEST_F(NavigationManagerSignalTest, CommitWithPendingNavigation)
+TEST_F(NavigationManagerSignalTest, NewNavigationCancelsPendingNavigation)
 {
 	PidlAbsolute pidl1 = CreateSimplePidlForTest(L"c:\\");
 	auto navigateParams1 = NavigateParams::Normal(pidl1.Raw());
@@ -205,16 +205,13 @@ TEST_F(NavigationManagerSignalTest, CommitWithPendingNavigation)
 
 		EXPECT_CALL(m_navigationStartedCallback, Call(NavigateParamsMatch(navigateParams1)));
 		EXPECT_CALL(m_navigationStartedCallback, Call(NavigateParamsMatch(navigateParams2)));
-		EXPECT_CALL(m_navigationWillCommitCallback, Call(NavigateParamsMatch(navigateParams1)));
-		EXPECT_CALL(m_navigationCommittedCallback, Call(NavigateParamsMatch(navigateParams1)));
-		EXPECT_CALL(m_navigationCancelledCallback, Call(NavigateParamsMatch(navigateParams2)));
+		EXPECT_CALL(m_navigationCancelledCallback, Call(NavigateParamsMatch(navigateParams1)));
+		EXPECT_CALL(m_navigationWillCommitCallback, Call(NavigateParamsMatch(navigateParams2)));
+		EXPECT_CALL(m_navigationCommittedCallback, Call(NavigateParamsMatch(navigateParams2)));
 	}
 
 	m_navigationManager->StartNavigation(navigateParams1);
 	m_navigationManager->StartNavigation(navigateParams2);
-
-	// This should allow the first navigation to proceed, allowing it to commit. That will then
-	// cause the second navigation to be cancelled.
 	RunExecutors();
 }
 
@@ -285,9 +282,9 @@ TEST_F(NavigationManagerSignalThreadTest, CheckThread)
 
 		EXPECT_CALL(m_navigationStartedCallback, Call(NavigateParamsMatch(navigateParams1)));
 		EXPECT_CALL(m_navigationStartedCallback, Call(NavigateParamsMatch(navigateParams2)));
-		EXPECT_CALL(m_navigationWillCommitCallback, Call(NavigateParamsMatch(navigateParams1)));
-		EXPECT_CALL(m_navigationCommittedCallback, Call(NavigateParamsMatch(navigateParams1)));
-		EXPECT_CALL(m_navigationCancelledCallback, Call(NavigateParamsMatch(navigateParams2)));
+		EXPECT_CALL(m_navigationCancelledCallback, Call(NavigateParamsMatch(navigateParams1)));
+		EXPECT_CALL(m_navigationWillCommitCallback, Call(NavigateParamsMatch(navigateParams2)));
+		EXPECT_CALL(m_navigationCommittedCallback, Call(NavigateParamsMatch(navigateParams2)));
 
 		EXPECT_CALL(m_navigationStartedCallback, Call(NavigateParamsMatch(navigateParams3)));
 		EXPECT_CALL(m_navigationFailedCallback, Call(NavigateParamsMatch(navigateParams3)));
@@ -301,7 +298,7 @@ TEST_F(NavigationManagerSignalThreadTest, CheckThread)
 		[this] { m_manualExecutorBackground->loop(std::numeric_limits<size_t>::max()); })
 		.wait();
 
-	// This will cause navigations 1 and 2 to be finalized.
+	// This will cancel navigation 1 and commit navigation 2.
 	m_manualExecutorCurrent->loop(std::numeric_limits<size_t>::max());
 
 	m_shellEnumerator->SetShouldSucceed(false);
@@ -345,7 +342,7 @@ TEST_F(NavigationManagerTest, PendingNavigations)
 	EXPECT_EQ(m_navigationManager->GetNumPendingNavigations(), 2u);
 	EXPECT_TRUE(m_navigationManager->HasAnyPendingNavigations());
 
-	// This should allow navigation 1 to complete.
+	// Navigation 1 was stopped by navigation 2, but remains pending until it returns.
 	m_manualExecutorBackground->loop(1);
 	m_manualExecutorCurrent->loop(1);
 	EXPECT_THAT(GeneratorToVector(m_navigationManager->GetPendingNavigations()),
@@ -387,23 +384,21 @@ TEST_F(NavigationManagerTest, ActiveNavigations)
 	auto navigateParams2 = NavigateParams::Normal(pidl2.Raw());
 	m_navigationManager->StartNavigation(navigateParams2);
 	EXPECT_THAT(GeneratorToVector(m_navigationManager->GetActiveNavigations()),
-		ElementsAre(NavigateParamsMatch(navigateParams1), NavigateParamsMatch(navigateParams2)));
+		ElementsAre(NavigateParamsMatch(navigateParams2)));
 	ASSERT_NE(m_navigationManager->MaybeGetLatestActiveNavigation(), nullptr);
 	EXPECT_THAT(m_navigationManager->MaybeGetLatestActiveNavigation(),
 		NavigateParamsMatch(navigateParams2));
-	EXPECT_EQ(m_navigationManager->GetNumActiveNavigations(), 2u);
+	EXPECT_EQ(m_navigationManager->GetNumActiveNavigations(), 1u);
 	EXPECT_TRUE(m_navigationManager->HasAnyActiveNavigations());
 
-	// This should allow navigation 1 to complete, which should result in navigation 2 being
-	// cancelled. That should leave no active navigations.
+	// Completing the stopped navigation leaves navigation 2 active.
 	m_manualExecutorBackground->loop(1);
 	m_manualExecutorCurrent->loop(1);
-	EXPECT_THAT(GeneratorToVector(m_navigationManager->GetActiveNavigations()), IsEmpty());
-	EXPECT_EQ(m_navigationManager->MaybeGetLatestActiveNavigation(), nullptr);
-	EXPECT_EQ(m_navigationManager->GetNumActiveNavigations(), 0u);
-	EXPECT_FALSE(m_navigationManager->HasAnyActiveNavigations());
+	EXPECT_THAT(GeneratorToVector(m_navigationManager->GetActiveNavigations()),
+		ElementsAre(NavigateParamsMatch(navigateParams2)));
+	EXPECT_EQ(m_navigationManager->GetNumActiveNavigations(), 1u);
 
-	// This navigation has been started after navigation 1 finished, so it can commit.
+	// This navigation supersedes navigation 2.
 	PidlAbsolute pidl3 = CreateSimplePidlForTest(L"e:\\");
 	auto navigateParams3 = NavigateParams::Normal(pidl3.Raw());
 	m_navigationManager->StartNavigation(navigateParams3);
@@ -415,8 +410,7 @@ TEST_F(NavigationManagerTest, ActiveNavigations)
 	EXPECT_EQ(m_navigationManager->GetNumActiveNavigations(), 1u);
 	EXPECT_TRUE(m_navigationManager->HasAnyActiveNavigations());
 
-	// This should allow navigation 2 to complete, resulting in its cancellation being finalized.
-	// Navigation 3 should still be active, however.
+	// Completing navigation 2 leaves navigation 3 active.
 	m_manualExecutorBackground->loop(1);
 	m_manualExecutorCurrent->loop(1);
 	EXPECT_THAT(GeneratorToVector(m_navigationManager->GetActiveNavigations()),

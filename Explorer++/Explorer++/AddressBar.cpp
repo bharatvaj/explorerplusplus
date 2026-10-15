@@ -12,6 +12,7 @@
 #include "ShellBrowser/NavigationEvents.h"
 #include "ShellBrowser/ShellBrowser.h"
 #include "ShellBrowser/ShellBrowserEvents.h"
+#include "ShellBrowser/ShellNavigationController.h"
 #include "Tab.h"
 #include "TabEvents.h"
 #include "../Helper/DragDropHelper.h"
@@ -148,6 +149,13 @@ void AddressBar::OnFocused()
 
 void AddressBar::OnTabSelected(const Tab &tab)
 {
+	if (tab.GetShellBrowser()->GetNavigationController()->GetCurrentEntry()->IsInitialEntry())
+	{
+		m_scopedStopSource = std::make_unique<ScopedStopSource>();
+		m_view->UpdateTextAndIcon(L"", 0);
+		return;
+	}
+
 	UpdateTextAndIcon(tab.GetShellBrowser());
 }
 

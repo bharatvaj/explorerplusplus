@@ -29,6 +29,8 @@ NavigationManager::~NavigationManager() = default;
 
 void NavigationManager::StartNavigation(const NavigateParams &navigateParams)
 {
+	// A newer destination supersedes any enumeration still in progress.
+	m_scopedStopSource = std::make_unique<ScopedStopSource>();
 	auto navigationRequest = std::make_unique<NavigationRequest>(m_shellBrowser, m_navigationEvents,
 		static_cast<NavigationRequestDelegate *>(this), m_shellEnumerator, m_enumerationExecutor,
 		m_originalExecutor, navigateParams, m_scopedStopSource->GetToken());
@@ -45,7 +47,7 @@ void NavigationManager::OnEnumerationCompleted(NavigationRequest *request)
 
 void NavigationManager::OnEnumerationFailed(NavigationRequest *request)
 {
-	if (!m_anyNavigationsCommitted)
+	if (!m_anyNavigationsCommitted && request == MaybeGetLatestPendingNavigation())
 	{
 		// Typically, when a navigation fails, nothing will happen. The original folder will
 		// continue to be shown. However, when the initial navigation fails, there is no original
@@ -59,7 +61,7 @@ void NavigationManager::OnEnumerationFailed(NavigationRequest *request)
 
 void NavigationManager::OnEnumerationStopped(NavigationRequest *request)
 {
-	if (!m_anyNavigationsCommitted)
+	if (!m_anyNavigationsCommitted && request == MaybeGetLatestPendingNavigation())
 	{
 		CommitNavigation(request);
 		return;
@@ -164,9 +166,8 @@ bool NavigationManager::ActiveNavigationFilter(
 {
 	if (!m_anyNavigationsCommitted)
 	{
-		// In this case, any pending navigation has the ability to commit, so every pending
-		// navigation is considered active.
-		return true;
+		// Only the latest request can commit before the first navigation succeeds.
+		return pendingNavigation.get() == MaybeGetLatestPendingNavigation();
 	}
 
 	// Typically, only navigations that haven't been stopped are considered active.

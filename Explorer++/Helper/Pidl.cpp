@@ -82,14 +82,8 @@ void PidlAccessor::PidlBase<IDListType, CloneFunction>::UpdateDebugInfo()
 
 	if constexpr (std::is_same_v<IDListType, ITEMIDLIST_ABSOLUTE>)
 	{
-		if (m_pidl)
-		{
-			m_path = GetDisplayNameWithFallback(m_pidl.get(), SHGDN_FORPARSING);
-		}
-		else
-		{
-			m_path.clear();
-		}
+		// Resolving a PIDL just for the debugger can block on a disconnected network folder.
+		m_path.clear();
 	}
 }
 #else

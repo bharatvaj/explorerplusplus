@@ -11,6 +11,7 @@
 #include "ShellBrowser/NavigationEvents.h"
 #include "ShellBrowser/ShellBrowserEvents.h"
 #include "ShellBrowser/ShellBrowserImpl.h"
+#include "ShellBrowser/ShellNavigationController.h"
 #include "TabContainer.h"
 #include "TabEvents.h"
 #include "../Helper/Helper.h"
@@ -139,6 +140,12 @@ void BrowserView::UpdateWindowText()
 	}
 
 	const Tab &tab = m_browser->GetActiveTabContainer()->GetSelectedTab();
+	if (tab.GetShellBrowser()->GetNavigationController()->GetCurrentEntry()->IsInitialEntry())
+	{
+		SetWindowText(m_hwnd, AppInfo::NAME);
+		return;
+	}
+
 	const auto &pidl = tab.GetShellBrowser()->GetDirectory();
 
 	std::wstring folderDisplayName;

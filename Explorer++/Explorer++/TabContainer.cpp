@@ -63,6 +63,12 @@ public:
 
 	std::wstring GetText() const override
 	{
+		if (m_tab->GetShellBrowser()->GetNavigationController()->GetCurrentEntry()->IsInitialEntry()
+			&& !m_tab->GetUseCustomName())
+		{
+			return L"...";
+		}
+
 		std::wstring name = m_tab->GetName();
 		boost::replace_all(name, L"&", L"&&");
 		return name;
@@ -79,6 +85,11 @@ public:
 		if (m_tab->IsLocked())
 		{
 			return m_imageListManager->GetLockIconIndex();
+		}
+
+		if (m_tab->GetShellBrowser()->GetNavigationController()->GetCurrentEntry()->IsInitialEntry())
+		{
+			return m_imageListManager->GetDefaultFolderIconIndex();
 		}
 
 		if (!m_iconIndex)

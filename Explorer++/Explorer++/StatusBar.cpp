@@ -12,6 +12,7 @@
 #include "ShellBrowser/NavigationEvents.h"
 #include "ShellBrowser/ShellBrowserEvents.h"
 #include "ShellBrowser/ShellBrowserImpl.h"
+#include "ShellBrowser/ShellNavigationController.h"
 #include "StatusBarView.h"
 #include "TabEvents.h"
 #include <fmt/format.h>
@@ -162,11 +163,19 @@ void StatusBar::UpdateText(const Tab &tab)
 		return;
 	}
 
+	bool initialNavigation =
+		tab.GetShellBrowser()->GetNavigationController()->GetCurrentEntry()->IsInitialEntry();
 	if (auto *navigation = tab.GetShellBrowser()->MaybeGetLatestActiveNavigation())
 	{
-		// In this case, there is at least one active navigation in progress, so the status bar
-		// should reflect that.
-		SetLoadingText(navigation->GetNavigateParams().pidl.Raw());
+		// Resolving a restored network folder's name can block the UI before its first draw.
+		SetLoadingText(initialNavigation ? nullptr : navigation->GetNavigateParams().pidl.Raw());
+		return;
+	}
+	if (initialNavigation)
+	{
+		m_view->SetPartText(0, L"");
+		m_view->SetPartText(1, L"");
+		m_view->SetPartText(2, L"");
 		return;
 	}
 
@@ -243,7 +252,8 @@ void StatusBar::SetLoadingText(PCIDLIST_ABSOLUTE pidl)
 {
 	std::wstring loadingTemplate = m_resourceLoader->LoadString(IDS_GENERAL_LOADING);
 	std::wstring loadingText = fmt::format(fmt::runtime(loadingTemplate),
-		fmt::arg(L"folder_name", GetDisplayNameWithFallback(pidl, SHGDN_INFOLDER)));
+		fmt::arg(L"folder_name",
+			pidl ? GetDisplayNameWithFallback(pidl, SHGDN_INFOLDER) : L""));
 	m_view->SetPartText(0, loadingText);
 	m_view->SetPartText(1, L"");
 	m_view->SetPartText(2, L"");

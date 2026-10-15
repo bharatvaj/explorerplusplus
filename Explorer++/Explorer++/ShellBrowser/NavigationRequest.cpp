@@ -121,20 +121,27 @@ concurrencpp::null_result NavigationRequest::StartInternal(WeakPtr<NavigationReq
 	// matches the behavior of Explorer. For example, if a symlink to a directory is created and the
 	// target directory is then removed, Explorer will try to navigate to the target, without
 	// attempting to resolve the link.
-	unique_pidl_absolute targetPidl;
-	HRESULT hr = MaybeGetLinkTarget(navigateParams.pidl.Raw(), targetPidl);
-
-	if (SUCCEEDED(hr))
-	{
-		navigateParams.pidl = targetPidl.get();
-	}
-
 	std::vector<PidlChild> items;
-	hr = shellEnumerator->EnumerateDirectory(navigateParams.pidl.Raw(),
-		ShellItemFilter::ItemType::FoldersAndFiles,
-		showHidden ? ShellItemFilter::HiddenItemPolicy::Include
-				   : ShellItemFilter::HiddenItemPolicy::Exclude,
-		items, stopToken);
+	HRESULT hr = S_OK;
+	if (!stopToken.stop_requested())
+	{
+		unique_pidl_absolute targetPidl;
+		hr = MaybeGetLinkTarget(navigateParams.pidl.Raw(), targetPidl);
+
+		if (SUCCEEDED(hr))
+		{
+			navigateParams.pidl = targetPidl.get();
+		}
+
+		if (!stopToken.stop_requested())
+		{
+			hr = shellEnumerator->EnumerateDirectory(navigateParams.pidl.Raw(),
+				ShellItemFilter::ItemType::FoldersAndFiles,
+				showHidden ? ShellItemFilter::HiddenItemPolicy::Include
+						   : ShellItemFilter::HiddenItemPolicy::Exclude,
+				items, stopToken);
+		}
+	}
 
 	co_await concurrencpp::resume_on(originalExecutor);
 

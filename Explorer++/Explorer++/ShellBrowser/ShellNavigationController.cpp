@@ -122,6 +122,12 @@ bool ShellNavigationController::CanGoUp() const
 
 void ShellNavigationController::GoUp()
 {
+	if (m_navigationManager->HasAnyActiveNavigations())
+	{
+		m_navigationManager->StopLoading();
+		return;
+	}
+
 	auto *currentEntry = GetCurrentEntry();
 
 	unique_pidl_absolute pidlParent;
