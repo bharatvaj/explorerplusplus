@@ -4,19 +4,24 @@
 
 #include "stdafx.h"
 #include "Explorer++.h"
+#include "AppServices.h"
 #include "Config.h"
 #include "DisplayWindow/DisplayWindow.h"
 #include "MainResource.h"
 #include "ResourceLoader.h"
+#include "Runtime.h"
+#include "RuntimeHelper.h"
 #include "ShellBrowser/ShellBrowserImpl.h"
 #include "TabContainer.h"
 #include "../Helper/FolderSize.h"
 #include "../Helper/Helper.h"
 #include "../Helper/ShellHelper.h"
 #include <Shlwapi.h>
+#include <algorithm>
 
 void Explorerplusplus::UpdateDisplayWindow(const Tab &tab)
 {
+	m_selectedDrivePath.reset();
 	DisplayWindow_ClearTextBuffer(m_displayWindow->GetHWND());
 
 	int nSelected = tab.GetShellBrowserImpl()->GetNumSelected();
@@ -315,43 +320,89 @@ void Explorerplusplus::UpdateDisplayWindowForOneFile(const Tab &tab)
 		{
 			if (PathIsRoot(fullItemName.c_str()))
 			{
-				TCHAR szMsg[64];
-				ULARGE_INTEGER ulTotalNumberOfBytes;
-				ULARGE_INTEGER ulTotalNumberOfFreeBytes;
-				BOOL bRet = GetDiskFreeSpaceEx(fullItemName.c_str(), nullptr, &ulTotalNumberOfBytes,
-					&ulTotalNumberOfFreeBytes);
-
-				if (bRet)
-				{
-					auto sizeText = FormatSizeString(ulTotalNumberOfFreeBytes.QuadPart);
-					auto freeSpaceTemplate =
-						m_resourceLoader->LoadString(IDS_GENERAL_DISPLAY_WINDOW_FREE_SPACE);
-					StringCchPrintf(szMsg, std::size(szMsg), freeSpaceTemplate.c_str(),
-						sizeText.c_str());
-					DisplayWindow_BufferText(m_displayWindow->GetHWND(), szMsg);
-
-					sizeText = FormatSizeString(ulTotalNumberOfBytes.QuadPart);
-					auto totalSizeTemplate =
-						m_resourceLoader->LoadString(IDS_GENERAL_DISPLAY_WINDOW_TOTAL_SIZE);
-					StringCchPrintf(szMsg, std::size(szMsg), totalSizeTemplate.c_str(),
-						sizeText.c_str());
-					DisplayWindow_BufferText(m_displayWindow->GetHWND(), szMsg);
-				}
-
-				TCHAR szFileSystem[MAX_PATH + 1];
-				bRet = GetVolumeInformation(fullItemName.c_str(), nullptr, 0, nullptr, nullptr,
-					nullptr, szFileSystem, std::size(szFileSystem));
-
-				if (bRet)
-				{
-					auto fileSystemTemplate =
-						m_resourceLoader->LoadString(IDS_GENERAL_DISPLAY_WINDOW_FILE_SYSTEM);
-					StringCchPrintf(szMsg, std::size(szMsg), fileSystemTemplate.c_str(),
-						szFileSystem);
-					DisplayWindow_BufferText(m_displayWindow->GetHWND(), szMsg);
-				}
+				m_selectedDrivePath = fullItemName;
+				StartDriveInformationRequest(fullItemName);
 			}
 		}
+	}
+}
+
+void Explorerplusplus::StartDriveInformationRequest(const std::wstring &path)
+{
+	if (m_pendingDriveInformationPaths.size() == 2
+		|| std::find(m_pendingDriveInformationPaths.begin(), m_pendingDriveInformationPaths.end(),
+			path) != m_pendingDriveInformationPaths.end())
+	{
+		return;
+	}
+
+	m_pendingDriveInformationPaths.push_back(path);
+	FetchDriveInformation(m_weakPtrFactory.GetWeakPtr(), m_appServices->GetRuntime(), path);
+}
+
+concurrencpp::null_result Explorerplusplus::FetchDriveInformation(WeakPtr<Explorerplusplus> self,
+	Runtime *runtime, std::wstring path)
+{
+	co_await ResumeOnComStaThread(runtime);
+
+	ULARGE_INTEGER totalBytes;
+	ULARGE_INTEGER freeBytes;
+	bool hasSpace = GetDiskFreeSpaceEx(path.c_str(), nullptr, &totalBytes, &freeBytes);
+
+	TCHAR fileSystem[MAX_PATH + 1];
+	bool hasFileSystem = GetVolumeInformation(path.c_str(), nullptr, 0, nullptr, nullptr, nullptr,
+		fileSystem, std::size(fileSystem));
+	std::wstring fileSystemName = hasFileSystem ? fileSystem : L"";
+
+	co_await ResumeOnUiThread(runtime);
+
+	if (!self)
+	{
+		co_return;
+	}
+
+	auto &pendingPaths = self->m_pendingDriveInformationPaths;
+	auto pending = std::find(pendingPaths.begin(), pendingPaths.end(), path);
+	if (pending != pendingPaths.end())
+	{
+		pendingPaths.erase(pending);
+	}
+	if (self->GetLifecycleState() != LifecycleState::Main)
+	{
+		co_return;
+	}
+	if (self->m_selectedDrivePath != path)
+	{
+		// A newer selection superseded this result. Run only the latest requested drive.
+		if (self->m_selectedDrivePath)
+		{
+			self->StartDriveInformationRequest(*self->m_selectedDrivePath);
+		}
+		co_return;
+	}
+
+	TCHAR text[64];
+	if (hasSpace)
+	{
+		auto sizeText = FormatSizeString(freeBytes.QuadPart);
+		auto freeSpaceTemplate =
+			self->m_resourceLoader->LoadString(IDS_GENERAL_DISPLAY_WINDOW_FREE_SPACE);
+		StringCchPrintf(text, std::size(text), freeSpaceTemplate.c_str(), sizeText.c_str());
+		DisplayWindow_BufferText(self->m_displayWindow->GetHWND(), text);
+
+		sizeText = FormatSizeString(totalBytes.QuadPart);
+		auto totalSizeTemplate =
+			self->m_resourceLoader->LoadString(IDS_GENERAL_DISPLAY_WINDOW_TOTAL_SIZE);
+		StringCchPrintf(text, std::size(text), totalSizeTemplate.c_str(), sizeText.c_str());
+		DisplayWindow_BufferText(self->m_displayWindow->GetHWND(), text);
+	}
+
+	if (hasFileSystem)
+	{
+		auto fileSystemTemplate =
+			self->m_resourceLoader->LoadString(IDS_GENERAL_DISPLAY_WINDOW_FILE_SYSTEM);
+		StringCchPrintf(text, std::size(text), fileSystemTemplate.c_str(), fileSystemName.c_str());
+		DisplayWindow_BufferText(self->m_displayWindow->GetHWND(), text);
 	}
 }
 

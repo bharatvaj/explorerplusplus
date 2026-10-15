@@ -398,18 +398,32 @@ std::optional<ShellBrowserImpl::GroupInfo> ShellBrowserImpl::DetermineItemTotalS
 	totalSizeGroupLimits[3].QuadPart = 20 * totalSizeGroupLimits[2].QuadPart;
 	totalSizeGroupLimits[4].QuadPart = 100 * totalSizeGroupLimits[2].QuadPart;
 
-	SHBindToParent(itemInfo.pidlComplete.get(), IID_PPV_ARGS(&pShellFolder), &pidlRelative);
+	if (FAILED(SHBindToParent(itemInfo.pidlComplete.get(), IID_PPV_ARGS(&pShellFolder),
+			&pidlRelative)))
+	{
+		return std::nullopt;
+	}
 
-	pShellFolder->GetDisplayNameOf(pidlRelative, SHGDN_FORPARSING, &str);
-	StrRetToBuf(&str, pidlRelative, szItem, std::size(szItem));
+	HRESULT hr = pShellFolder->GetDisplayNameOf(pidlRelative, SHGDN_FORPARSING, &str);
+	if (SUCCEEDED(hr))
+	{
+		hr = StrRetToBuf(&str, pidlRelative, szItem, std::size(szItem));
+	}
+	pShellFolder->Release();
+	if (FAILED(hr))
+	{
+		return std::nullopt;
+	}
 
 	bRoot = PathIsRoot(szItem);
 
 	if (bRoot)
 	{
 		bRes = GetDiskFreeSpaceEx(szItem, nullptr, &nTotalBytes, &nFreeBytes);
-
-		pShellFolder->Release();
+		if (!bRes)
+		{
+			return std::nullopt;
+		}
 
 		i = std::size(sizeGroups) - 1;
 
@@ -618,18 +632,32 @@ std::optional<ShellBrowserImpl::GroupInfo> ShellBrowserImpl::DetermineItemFreeSp
 	BOOL bRoot;
 	BOOL bRes = FALSE;
 
-	SHBindToParent(itemInfo.pidlComplete.get(), IID_PPV_ARGS(&pShellFolder), &pidlRelative);
+	if (FAILED(SHBindToParent(itemInfo.pidlComplete.get(), IID_PPV_ARGS(&pShellFolder),
+			&pidlRelative)))
+	{
+		return std::nullopt;
+	}
 
-	pShellFolder->GetDisplayNameOf(pidlRelative, SHGDN_FORPARSING, &str);
-	StrRetToBuf(&str, pidlRelative, szItem, std::size(szItem));
-
+	HRESULT hr = pShellFolder->GetDisplayNameOf(pidlRelative, SHGDN_FORPARSING, &str);
+	if (SUCCEEDED(hr))
+	{
+		hr = StrRetToBuf(&str, pidlRelative, szItem, std::size(szItem));
+	}
 	pShellFolder->Release();
+	if (FAILED(hr))
+	{
+		return std::nullopt;
+	}
 
 	bRoot = PathIsRoot(szItem);
 
 	if (bRoot)
 	{
 		bRes = GetDiskFreeSpaceEx(szItem, nullptr, &nTotalBytes, &nFreeBytes);
+		if (!bRes || nTotalBytes.QuadPart == 0)
+		{
+			return std::nullopt;
+		}
 
 		LARGE_INTEGER lDiv1;
 		LARGE_INTEGER lDiv2;

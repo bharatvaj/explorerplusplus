@@ -294,6 +294,10 @@ void ShellBrowserImpl::SetViewMode(ViewMode viewMode)
 	}
 
 	SetViewModeInternal(viewMode);
+	if (m_folderSettings.sortMode == +SortMode::DateTaken)
+	{
+		SortFolder();
+	}
 
 	switch (viewMode)
 	{
@@ -436,6 +440,8 @@ void ShellBrowserImpl::SetViewModeInternal(ViewMode viewMode)
 	{
 		m_columnThreadPool.clear_queue();
 		m_columnResults.clear();
+		m_dateTakenSortResults.clear();
+		m_pendingDateTakenSortItems.clear();
 	}
 
 	if (viewMode != +ViewMode::Details && viewMode != +ViewMode::Tiles)
@@ -522,6 +528,11 @@ void ShellBrowserImpl::SetSortMode(SortMode sortMode)
 		return;
 	}
 
+	m_dateTakenSortCancelled->store(true);
+	m_dateTakenSortResults.clear();
+	m_pendingDateTakenSortItems.clear();
+	m_dateTakenSortKeys.clear();
+	m_dateTakenSortCancelled = std::make_shared<std::atomic_bool>(false);
 	m_folderSettings.sortMode = sortMode;
 
 	SortFolder();

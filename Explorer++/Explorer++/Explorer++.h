@@ -29,6 +29,7 @@
 #include <concurrencpp/concurrencpp.h>
 #include <wil/resource.h>
 #include <optional>
+#include <vector>
 
 /* Sent when a folder size calculation has finished. */
 #define WM_APP_FOLDERSIZECOMPLETED WM_APP + 3
@@ -274,6 +275,9 @@ private:
 	void UpdateDisplayWindowForZeroFiles(const Tab &tab);
 	void UpdateDisplayWindowForOneFile(const Tab &tab);
 	void UpdateDisplayWindowForMultipleFiles(const Tab &tab);
+	void StartDriveInformationRequest(const std::wstring &path);
+	static concurrencpp::null_result FetchDriveInformation(WeakPtr<Explorerplusplus> self,
+		Runtime *runtime, std::wstring path);
 
 	/* Columns. */
 	void CopyColumnInfoToClipboard();
@@ -398,6 +402,10 @@ private:
 	/* Display window folder sizes. */
 	std::list<DWFolderSize> m_DWFolderSizes;
 	int m_iDWFolderSizeUniqueId;
+
+	// Limit outstanding drive queries to two per window.
+	std::vector<std::wstring> m_pendingDriveInformationPaths;
+	std::optional<std::wstring> m_selectedDrivePath;
 
 	WeakPtrFactory<Explorerplusplus> m_weakPtrFactory{ this };
 };

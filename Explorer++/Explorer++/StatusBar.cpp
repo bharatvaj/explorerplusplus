@@ -8,6 +8,7 @@
 #include "Config.h"
 #include "MainResource.h"
 #include "ResourceLoader.h"
+#include "RuntimeHelper.h"
 #include "ShellBrowser/NavigationEvents.h"
 #include "ShellBrowser/ShellBrowserEvents.h"
 #include "ShellBrowser/ShellBrowserImpl.h"
@@ -21,19 +22,22 @@
 
 StatusBar *StatusBar::Create(StatusBarView *view, const BrowserWindow *browser,
 	const Config *config, TabEvents *tabEvents, ShellBrowserEvents *shellBrowserEvents,
-	NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader)
+	NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader,
+	const Runtime *runtime)
 {
 	return new StatusBar(view, browser, config, tabEvents, shellBrowserEvents, navigationEvents,
-		resourceLoader);
+		resourceLoader, runtime);
 }
 
 StatusBar::StatusBar(StatusBarView *view, const BrowserWindow *browser, const Config *config,
 	TabEvents *tabEvents, ShellBrowserEvents *shellBrowserEvents,
-	NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader) :
+	NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader,
+	const Runtime *runtime) :
 	m_view(view),
 	m_browser(browser),
 	m_config(config),
-	m_resourceLoader(resourceLoader)
+	m_resourceLoader(resourceLoader),
+	m_runtime(runtime)
 {
 	SetStandardParts();
 
@@ -73,11 +77,18 @@ void StatusBar::SetStandardParts()
 
 void StatusBar::OnTabSelected(const Tab &tab)
 {
+	++m_driveGeneration;
+	m_cachedDrivePath.reset();
 	UpdateText(tab);
 }
 
 void StatusBar::OnDirectoryContentsChanged(const ShellBrowser *shellBrowser)
 {
+	// A failed lookup must not be retried for every notification from an unavailable share.
+	if (!m_driveRequestPending && !m_cachedDriveText.empty())
+	{
+		m_cachedDrivePath.reset();
+	}
 	const auto *tab = shellBrowser->GetTab();
 	UpdateText(*tab);
 }
@@ -90,6 +101,8 @@ void StatusBar::OnListViewSelectionChanged(const ShellBrowser *shellBrowser)
 
 void StatusBar::UpdateTextForNavigation(const NavigationRequest *request)
 {
+	++m_driveGeneration;
+	m_cachedDrivePath.reset();
 	const auto *tab = request->GetShellBrowser()->GetTab();
 	UpdateText(*tab);
 }
@@ -107,6 +120,7 @@ StatusBarView *StatusBar::GetView()
 
 void StatusBar::NotifyMenuLoopStarted()
 {
+	++m_driveGeneration;
 	m_showingMenuHelpText = true;
 
 	m_view->SetParts({ 100 });
@@ -222,9 +236,7 @@ void StatusBar::UpdateText(const Tab &tab)
 
 	m_view->SetPartText(1, sizeText);
 
-	std::wstring driveFreeSpaceText =
-		CreateDriveFreeSpaceString(tab.GetShellBrowser()->GetDirectoryPath().c_str());
-	m_view->SetPartText(2, driveFreeSpaceText);
+	UpdateDriveFreeSpace(tab);
 }
 
 void StatusBar::SetLoadingText(PCIDLIST_ABSOLUTE pidl)
@@ -237,21 +249,62 @@ void StatusBar::SetLoadingText(PCIDLIST_ABSOLUTE pidl)
 	m_view->SetPartText(2, L"");
 }
 
-std::wstring StatusBar::CreateDriveFreeSpaceString(const std::wstring &path)
+void StatusBar::UpdateDriveFreeSpace(const Tab &tab)
 {
-	ULARGE_INTEGER totalNumberOfBytes;
-	ULARGE_INTEGER totalNumberOfFreeBytes;
-	ULARGE_INTEGER bytesAvailableToCaller;
-	if (GetDiskFreeSpaceEx(path.c_str(), &bytesAvailableToCaller, &totalNumberOfBytes,
-			&totalNumberOfFreeBytes)
-		== 0)
+	auto path = tab.GetShellBrowser()->GetDirectoryPath();
+	m_view->SetPartText(2, m_cachedDrivePath == path ? m_cachedDriveText : L"");
+
+	if (path.empty() || m_cachedDrivePath == path || m_driveRequestPending)
 	{
-		return {};
+		return;
 	}
 
-	return std::format(L"{} {} ({:.0Lf}%)", FormatSizeString(totalNumberOfFreeBytes.QuadPart),
-		m_resourceLoader->LoadString(IDS_GENERAL_FREE),
-		totalNumberOfFreeBytes.QuadPart * 100.0 / totalNumberOfBytes.QuadPart);
+	// Only one potentially slow network lookup may be queued at a time. When it finishes,
+	// the active tab is checked again so a rapid series of changes only requests the latest path.
+	m_driveRequestPending = true;
+	FetchDriveFreeSpace(m_weakPtrFactory.GetWeakPtr(), m_runtime, tab.GetId(), std::move(path),
+		m_driveGeneration);
+}
+
+concurrencpp::null_result StatusBar::FetchDriveFreeSpace(WeakPtr<StatusBar> self,
+	const Runtime *runtime, int tabId, std::wstring path, uint64_t generation)
+{
+	co_await ResumeOnComStaThread(runtime);
+
+	ULARGE_INTEGER totalBytes;
+	ULARGE_INTEGER freeBytes;
+	bool hasSpace = GetDiskFreeSpaceEx(path.c_str(), nullptr, &totalBytes, &freeBytes);
+
+	co_await ResumeOnUiThread(runtime);
+
+	if (!self)
+	{
+		co_return;
+	}
+
+	self->m_driveRequestPending = false;
+	if (!self->m_showingMenuHelpText
+		&& self->m_browser->GetLifecycleState() == BrowserWindow::LifecycleState::Main)
+	{
+		const auto *activeBrowser = self->m_browser->GetActiveShellBrowser();
+		const auto *activeTab = activeBrowser->GetTab();
+		if (!activeBrowser->MaybeGetLatestActiveNavigation() && activeTab->GetId() == tabId
+			&& path == activeBrowser->GetDirectoryPath() && generation == self->m_driveGeneration)
+		{
+			// Cache failures too; a navigation or tab switch can retry.
+			self->m_cachedDrivePath = path;
+			self->m_cachedDriveText = hasSpace && totalBytes.QuadPart != 0
+				? std::format(L"{} {} ({:.0Lf}%)", FormatSizeString(freeBytes.QuadPart),
+					self->m_resourceLoader->LoadString(IDS_GENERAL_FREE),
+					freeBytes.QuadPart * 100.0 / totalBytes.QuadPart)
+				: L"";
+			self->m_view->SetPartText(2, self->m_cachedDriveText);
+		}
+		else if (!activeBrowser->MaybeGetLatestActiveNavigation())
+		{
+			self->UpdateDriveFreeSpace(*activeTab);
+		}
+	}
 }
 
 void StatusBar::OnWindowDestroyed()

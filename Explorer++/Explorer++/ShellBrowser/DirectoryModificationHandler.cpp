@@ -91,7 +91,13 @@ void ShellBrowserImpl::ProcessDirectoryChangeNotification(DirectoryWatcher::Even
 			// It's not safe to perform an immediate refresh here, since the set of changes is being
 			// iterated through by the directory watcher. Therefore, the function below will perform
 			// the refresh asynchronously.
-			RefreshDirectoryAfterUpdate(m_weakPtrFactory.GetWeakPtr(), m_appServices->GetRuntime());
+			if (m_lastImplicitRefreshFolderId != m_uniqueFolderId)
+			{
+				m_lastImplicitRefreshFolderId = m_uniqueFolderId;
+				RefreshDirectoryAfterUpdate(m_weakPtrFactory.GetWeakPtr(),
+					m_directoryState.pidlDirectory, m_uniqueFolderId,
+					m_appServices->GetRuntime());
+			}
 		}
 		else if (ILIsParent(simplePidl1.Raw(), m_directoryState.pidlDirectory.Raw(), false))
 		{
@@ -185,6 +191,8 @@ void ShellBrowserImpl::AddItem(PCIDLIST_ABSOLUTE pidl)
 	{
 		return;
 	}
+
+	QueueDateTakenSortItem(*itemId);
 
 	if (m_config->globalFolderSettings.insertSorted)
 	{
@@ -287,6 +295,9 @@ void ShellBrowserImpl::UpdateItem(PCIDLIST_ABSOLUTE pidl, PCIDLIST_ABSOLUTE upda
 	m_directoryState.totalDirSize += newFileSize.QuadPart - oldFileSize.QuadPart;
 
 	m_itemInfoMap[*internalIndex] = *itemInfo;
+	m_dateTakenSortKeys.erase(*internalIndex);
+	m_pendingDateTakenSortItems.erase(*internalIndex);
+	QueueDateTakenSortItem(*internalIndex);
 	const ItemInfo_t &updatedItemInfo = m_itemInfoMap[*internalIndex];
 
 	auto itemIndex = LocateItemByInternalIndex(*internalIndex);
@@ -466,16 +477,32 @@ concurrencpp::null_result ShellBrowserImpl::OnDirectoryPropertiesChanged(
 }
 
 concurrencpp::null_result ShellBrowserImpl::RefreshDirectoryAfterUpdate(
-	WeakPtr<ShellBrowserImpl> weakSelf, Runtime *runtime)
+	WeakPtr<ShellBrowserImpl> weakSelf, PidlAbsolute currentDirectory, int folderId,
+	Runtime *runtime)
 {
-	co_await concurrencpp::resume_on(runtime->GetUiThreadExecutor());
+	co_await ResumeOnComStaThread(runtime);
 
-	if (!weakSelf)
+	auto closestExistingItem = GetClosestExistingItem(currentDirectory.Raw());
+	bool directoryExists = closestExistingItem.HasValue()
+		&& ArePidlsEquivalent(closestExistingItem.Raw(), currentDirectory.Raw());
+
+	co_await ResumeOnUiThread(runtime);
+
+	if (!weakSelf || weakSelf->m_uniqueFolderId != folderId || !closestExistingItem.HasValue())
 	{
 		co_return;
 	}
 
-	weakSelf->m_navigationController->Refresh();
+	if (!directoryExists)
+	{
+		NavigateParams params = NavigateParams::Normal(closestExistingItem.Raw());
+		params.overrideNavigationTargetMode = true;
+		weakSelf->m_navigationController->Navigate(params);
+	}
+	else
+	{
+		weakSelf->m_navigationController->Refresh();
+	}
 }
 
 // Navigates to the closest ancestor of this item that exists. If this item itself exists, no

@@ -164,7 +164,8 @@ void Explorerplusplus::Initialize(const WindowStorageData &storageData)
 
 	auto *statusBarView = StatusBarView::Create(m_hwnd, m_config);
 	m_statusBar = StatusBar::Create(statusBarView, this, m_config, m_tabEvents,
-		m_shellBrowserEvents, m_navigationEvents, m_resourceLoader);
+		m_shellBrowserEvents, m_navigationEvents, m_resourceLoader,
+		m_appServices->GetRuntime());
 
 	CreateMainRebarAndChildren(storageData);
 	InitializeDisplayWindow();

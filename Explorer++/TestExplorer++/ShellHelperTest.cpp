@@ -5,6 +5,7 @@
 #include "pch.h"
 #include "../Helper/ShellHelper.h"
 #include "PidlTestHelper.h"
+#include "ScopedTestDir.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <wil/com.h>
@@ -282,6 +283,23 @@ TEST(GetDisplayName, ParsingName)
 	ASSERT_HRESULT_SUCCEEDED(hr);
 
 	EXPECT_THAT(parsingName, StrCaseEq(pidlPath));
+}
+
+TEST(GetClosestExistingItem, DeletedDirectoryFallsBackToParent)
+{
+	ScopedTestDir directory;
+	unique_pidl_absolute pidl;
+	HRESULT hr = SHParseDisplayName(directory.GetPath().c_str(), nullptr, wil::out_param(pidl),
+		0, nullptr);
+	ASSERT_HRESULT_SUCCEEDED(hr);
+	ASSERT_TRUE(GetClosestExistingItem(pidl.get()) == PidlAbsolute(pidl.get()));
+
+	ASSERT_TRUE(std::filesystem::remove(directory.GetPath()));
+	auto parent = GetClosestExistingItem(pidl.get());
+	EXPECT_TRUE(parent.HasValue());
+	EXPECT_NE(parent, PidlAbsolute(pidl.get()));
+	EXPECT_THAT(GetDisplayNameWithFallback(parent.Raw(), SHGDN_FORPARSING),
+		StrCaseEq(directory.GetPath().parent_path().wstring()));
 }
 
 class ExtractShellIconPartsTest : public Test

@@ -81,6 +81,11 @@ void ShellBrowserImpl::ClearPendingResults()
 {
 	m_columnThreadPool.clear_queue();
 	m_columnResults.clear();
+	m_dateTakenSortCancelled->store(true);
+	m_dateTakenSortCancelled = std::make_shared<std::atomic_bool>(false);
+	m_dateTakenSortResults.clear();
+	m_pendingDateTakenSortItems.clear();
+	m_dateTakenSortKeys.clear();
 
 	m_iconFetcher->ClearQueue();
 
@@ -760,6 +765,13 @@ void ShellBrowserImpl::RemoveItem(int iItemInternal)
 
 	m_directoryState.filteredItemsList.erase(iItemInternal);
 	m_itemInfoMap.erase(iItemInternal);
+	m_dateTakenSortKeys.erase(iItemInternal);
+	bool wasPending = m_pendingDateTakenSortItems.erase(iItemInternal) != 0;
+	if (wasPending && m_pendingDateTakenSortItems.empty()
+		&& m_folderSettings.sortMode == +SortMode::DateTaken)
+	{
+		SortFolder();
+	}
 
 	m_directoryState.numItems--;
 }

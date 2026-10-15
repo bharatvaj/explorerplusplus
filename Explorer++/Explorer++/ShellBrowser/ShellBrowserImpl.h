@@ -34,6 +34,7 @@
 #include <wil/resource.h>
 #include <thumbcache.h>
 #include <future>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -355,6 +356,7 @@ private:
 	};
 
 	static const UINT WM_APP_COLUMN_RESULT_READY = WM_APP + 150;
+	static const UINT WM_APP_DATE_TAKEN_SORT_READY = WM_APP + 153;
 	static const UINT WM_APP_THUMBNAIL_RESULT_READY = WM_APP + 151;
 	static const UINT WM_APP_INFO_TIP_READY = WM_APP + 152;
 
@@ -483,6 +485,8 @@ private:
 
 	/* Sorting. */
 	void SortFolder();
+	void QueueDateTakenSortItem(int internalIndex);
+	void ProcessDateTakenSortResult(int resultId);
 	int CALLBACK Sort(int InternalIndex1, int InternalIndex2) const;
 
 	/* Listview column support. */
@@ -521,7 +525,7 @@ private:
 	static concurrencpp::null_result OnDirectoryPropertiesChanged(
 		WeakPtr<ShellBrowserImpl> weakSelf, PidlAbsolute currentDirectory, Runtime *runtime);
 	static concurrencpp::null_result RefreshDirectoryAfterUpdate(WeakPtr<ShellBrowserImpl> weakSelf,
-		Runtime *runtime);
+		PidlAbsolute currentDirectory, int folderId, Runtime *runtime);
 	static concurrencpp::null_result NavigateUpToClosestExistingItemIfNecessary(
 		WeakPtr<ShellBrowserImpl> weakSelf, PidlAbsolute currentDirectory, Runtime *runtime);
 
@@ -657,6 +661,12 @@ private:
 	std::unordered_map<int, std::future<ColumnResult_t>> m_columnResults;
 	int m_columnResultIDCounter;
 
+	std::shared_ptr<std::atomic_bool> m_dateTakenSortCancelled =
+		std::make_shared<std::atomic_bool>(false);
+	std::unordered_map<int, std::wstring> m_dateTakenSortKeys;
+	std::unordered_map<int, int> m_pendingDateTakenSortItems;
+	std::unordered_map<int, std::pair<int, std::future<std::wstring>>> m_dateTakenSortResults;
+
 	std::unique_ptr<IconFetcher> m_iconFetcher;
 	CachedIcons *m_cachedIcons;
 
@@ -679,7 +689,9 @@ private:
 	This may be needed so that folders can be
 	told apart when adding files from directory
 	modification. */
-	int m_uniqueFolderId;
+	int m_uniqueFolderId = 0;
+	// Avoid retrying a failed implicit refresh until navigation commits.
+	std::optional<int> m_lastImplicitRefreshFolderId;
 
 	ShellBrowserEvents *const m_shellBrowserEvents;
 	const Config *const m_config;

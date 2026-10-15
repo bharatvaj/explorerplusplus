@@ -4,7 +4,11 @@
 
 #pragma once
 
+#include "../Helper/WeakPtrFactory.h"
 #include <boost/signals2.hpp>
+#include <concurrencpp/concurrencpp.h>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +17,7 @@ struct Config;
 class NavigationEvents;
 class NavigationRequest;
 class ResourceLoader;
+class Runtime;
 class ShellBrowser;
 class ShellBrowserEvents;
 class StatusBarView;
@@ -24,7 +29,8 @@ class StatusBar
 public:
 	static StatusBar *Create(StatusBarView *view, const BrowserWindow *browser,
 		const Config *config, TabEvents *tabEvents, ShellBrowserEvents *shellBrowserEvents,
-		NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader);
+		NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader,
+		const Runtime *runtime);
 
 	StatusBarView *GetView();
 
@@ -35,7 +41,8 @@ public:
 private:
 	StatusBar(StatusBarView *view, const BrowserWindow *browser, const Config *config,
 		TabEvents *tabEvents, ShellBrowserEvents *shellBrowserEvents,
-		NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader);
+		NavigationEvents *navigationEvents, const ResourceLoader *resourceLoader,
+		const Runtime *runtime);
 
 	void SetStandardParts();
 
@@ -47,7 +54,9 @@ private:
 
 	void UpdateText(const Tab &tab);
 	void SetLoadingText(PCIDLIST_ABSOLUTE pidl);
-	std::wstring CreateDriveFreeSpaceString(const std::wstring &path);
+	void UpdateDriveFreeSpace(const Tab &tab);
+	static concurrencpp::null_result FetchDriveFreeSpace(WeakPtr<StatusBar> self,
+		const Runtime *runtime, int tabId, std::wstring path, uint64_t generation);
 
 	void OnWindowDestroyed();
 
@@ -55,6 +64,12 @@ private:
 	const BrowserWindow *const m_browser;
 	const Config *const m_config;
 	const ResourceLoader *const m_resourceLoader;
+	const Runtime *const m_runtime;
 	bool m_showingMenuHelpText = false;
+	bool m_driveRequestPending = false;
+	uint64_t m_driveGeneration = 0;
+	std::optional<std::wstring> m_cachedDrivePath;
+	std::wstring m_cachedDriveText;
+	WeakPtrFactory<StatusBar> m_weakPtrFactory{ this };
 	std::vector<boost::signals2::scoped_connection> m_connections;
 };

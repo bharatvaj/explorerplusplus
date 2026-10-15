@@ -158,6 +158,10 @@ LRESULT ShellBrowserImpl::ListViewProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 		ProcessColumnResult(static_cast<int>(wParam));
 		break;
 
+	case WM_APP_DATE_TAKEN_SORT_READY:
+		ProcessDateTakenSortResult(static_cast<int>(wParam));
+		break;
+
 	case WM_APP_THUMBNAIL_RESULT_READY:
 		ProcessThumbnailResult(static_cast<int>(wParam));
 		break;

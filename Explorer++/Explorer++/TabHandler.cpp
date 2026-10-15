@@ -280,6 +280,8 @@ void Explorerplusplus::OnTabListViewSelectionChanged(const ShellBrowser *shellBr
 
 	if (GetActivePane()->GetTabContainer()->IsTabSelected(*tab))
 	{
+		// Clear the previous selection before the deferred display update runs.
+		m_selectedDrivePath.reset();
 		SetTimer(m_hwnd, LISTVIEW_ITEM_CHANGED_TIMER_ID, LISTVIEW_ITEM_CHANGED_TIMEOUT, nullptr);
 	}
 }

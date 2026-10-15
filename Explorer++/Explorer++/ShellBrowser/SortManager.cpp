@@ -4,6 +4,7 @@
 
 #include "stdafx.h"
 #include "ShellBrowserImpl.h"
+#include "ColumnDataRetrieval.h"
 #include "Config.h"
 #include "ItemData.h"
 #include "SortHelper.h"
@@ -12,16 +13,87 @@
 #include <Shlwapi.h>
 #include <gdiplus.h>
 #include <propkey.h>
+#include <atomic>
 #include <cassert>
 
 void ShellBrowserImpl::SortFolder()
 {
+	if (m_folderSettings.sortMode == +SortMode::DateTaken)
+	{
+		for (const auto &[internalIndex, itemInfo] : m_itemInfoMap)
+		{
+			if (!m_dateTakenSortKeys.contains(internalIndex)
+				&& !m_pendingDateTakenSortItems.contains(internalIndex))
+			{
+				QueueDateTakenSortItem(internalIndex);
+			}
+		}
+	}
+
 	SendMessage(m_listView, LVM_SORTITEMS, reinterpret_cast<WPARAM>(this),
 		reinterpret_cast<LPARAM>(SortStub));
 
 	if (m_folderSettings.viewMode == +ViewMode::Details)
 	{
 		ApplyHeaderSortArrow();
+	}
+}
+
+void ShellBrowserImpl::QueueDateTakenSortItem(int internalIndex)
+{
+	if (m_folderSettings.sortMode != +SortMode::DateTaken)
+	{
+		return;
+	}
+
+	m_dateTakenSortKeys.erase(internalIndex);
+	// IDs are shared across tabs so a late post to a recycled HWND can't match a new tab's work.
+	static std::atomic<int> nextResultId = 0;
+	int resultId = ++nextResultId;
+	m_pendingDateTakenSortItems[internalIndex] = resultId;
+	auto itemInfo = getBasicItemInfo(internalIndex);
+	auto result = m_columnThreadPool.push(
+		[listView = m_listView, resultId, itemInfo = std::move(itemInfo),
+			cancelled = m_dateTakenSortCancelled](int) {
+			if (cancelled->load())
+			{
+				return std::wstring{};
+			}
+			auto key = GetImageColumnText(itemInfo, PropertyTagDateTime);
+			if (!cancelled->load())
+			{
+				PostMessage(listView, WM_APP_DATE_TAKEN_SORT_READY, resultId, 0);
+			}
+			return key;
+		});
+	m_dateTakenSortResults.emplace(resultId,
+		std::make_pair(internalIndex, std::move(result)));
+}
+
+void ShellBrowserImpl::ProcessDateTakenSortResult(int resultId)
+{
+	auto result = m_dateTakenSortResults.find(resultId);
+	if (result == m_dateTakenSortResults.end())
+	{
+		return;
+	}
+
+	int internalIndex = result->second.first;
+	auto key = result->second.second.get();
+	m_dateTakenSortResults.erase(result);
+
+	auto pending = m_pendingDateTakenSortItems.find(internalIndex);
+	if (pending == m_pendingDateTakenSortItems.end() || pending->second != resultId)
+	{
+		return;
+	}
+
+	m_pendingDateTakenSortItems.erase(pending);
+	m_dateTakenSortKeys.emplace(internalIndex, std::move(key));
+	if (m_pendingDateTakenSortItems.empty()
+		&& m_folderSettings.sortMode == +SortMode::DateTaken)
+	{
+		SortFolder();
 	}
 }
 
@@ -186,9 +258,14 @@ int CALLBACK ShellBrowserImpl::Sort(int InternalIndex1, int InternalIndex2) cons
 			break;
 
 		case SortMode::DateTaken:
-			comparisonResult =
-				SortByImageProperty(basicItemInfo1, basicItemInfo2, PropertyTagDateTime);
+		{
+			const auto key1 = m_dateTakenSortKeys.find(InternalIndex1);
+			const auto key2 = m_dateTakenSortKeys.find(InternalIndex2);
+			const wchar_t *text1 = key1 == m_dateTakenSortKeys.end() ? L"" : key1->second.c_str();
+			const wchar_t *text2 = key2 == m_dateTakenSortKeys.end() ? L"" : key2->second.c_str();
+			comparisonResult = StrCmpLogicalW(text1, text2);
 			break;
+		}
 
 		case SortMode::Width:
 			comparisonResult =
